@@ -6,7 +6,7 @@ Sample nodejs code to receive AirVantage alerts thru a webhook
 
 1. Install dependencies `npm i`
 2. Start the server `npm start`
-3. Go to http://localhost:3000/ and prepare to watch the alerts comming
+3. Go to http://localhost:3000/ and prepare to watch the alerts coming
 4. Test by posting content on http://localhost:3000/alert
      
   ```bash
