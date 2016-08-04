@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AirVantage alerts by webhooks</title>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+</head>
+<body>
+    <div class="container">
+        <h1>AirVantage alerts received using a webhook</h1>
+        <span id="status-icon" class="glyphicon glyphicon-remove-circle"></span> <span id="status">Not connected</span>
+        <hr>
+        <br/>
+        <div id="alerts">
+
+        </div>
+    </div>
+
+
+    <script src="https://code.jquery.com/jquery-3.1.0.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        var socket = io('/');
+        socket.on("welcome", function () {
+            console.log("Connected");
+            $("#status").text("Connected");
+            $("#status-icon").removeClass("glyphicon-remove-circle").addClass("glyphicon-ok-circle")
+        });
+        socket.on('alerts', function (data) {
+            console.log(data);
+            $("#alerts").append($("<div>", {
+                "class":"well",
+                text: JSON.stringify(data)
+            }));
+        });
+    </script>
+</body>
+</html>
