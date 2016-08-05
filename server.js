@@ -8,8 +8,6 @@ const server = require('http').Server(app);
 const socketio = require('socket.io');
 const io = socketio(server);
 
-const socketClients = {};
-
 app.use(bodyParser.json());
 
 app.use(serveStatic('app'));
@@ -18,21 +16,18 @@ app.engine('.html', require('ejs').__express);
 app.set('views', './views');
 app.set('view engine', 'html');
 
-
 app.get('/', (req, res) => {
     res.render('index');
 });
 
 app.post('/alert', (req, res) => {
     console.log('/alert:', req.body);
-    _.each(socketClients, socket => socket.emit('alerts', req.body));
+   io.emit('alerts', req.body);
     res.status(200).send('OK');
 });
 
-
 io.on('connection', socket => {
     console.log('Connection of socket', socket.id);
-    socketClients[socket.id] = socket;
     socket.emit('welcome', {});
 });
 
