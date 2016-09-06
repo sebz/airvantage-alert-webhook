@@ -1,38 +1,248 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset=utf-8> <meta content="IE=edge" http-equiv=X-UA-Compatible>
+    <meta content="width=device-width,initial-scale=1" name=viewport>
     <title>AirVantage alerts by webhooks</title>
     <link href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <style type="text/css">
+        .alert-message {
+            margin: 10px 0 20px 20px;
+            padding-left: 10px;
+            border-left: 2px solid silver;
+        }
+        .raw-alert {
+            margin-top: 10px;
+        }
+
+        .title {
+            color: #E53B30;
+        }
+
+        .map {
+            margin-top: 20px;
+            border: 1px solid lightgray;
+            border-radius: 5px;
+            width:100%;
+        }
+        #noToken {
+            margin: 0 0 0 20px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1>AirVantage alerts received using a webhook</h1>
         <span id="status-icon" class="glyphicon glyphicon-remove-circle"></span> <span id="status">Not connected</span>
+        <blockquote id="noToken" style="display:none"><small></small></blockquote>
+        <div id="nbClients" class="text-right"></div>
         <hr>
         <br/>
         <div id="alerts">
-
+            <h4 class="text-center"><span class="glyphicon glyphicon-thumbs-up"></span> Everything's fine... for the moment!</h4>
         </div>
     </div>
 
-
+    <!--
+        Required external libraries
+    -->
     <script src="https://code.jquery.com/jquery-3.1.0.min.js"></script>
     <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/handlebarsjs/4.0.5/handlebars.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.14.1/moment.min.js" integrity="sha256-De/cgZoAkgvqoxL9yJpJzPHyozUETFnSv7EQGfQWQ4o=" crossorigin="anonymous"></script>
+
+    <!--
+     Handlebar template to display an alert and its details
+    -->
+    <script id="alert-template" type="text/x-handlebars-template">
+      <div class="well">
+        <span class="badge pull-right">{{when}}</span>
+        {{#if alertName}}
+        <div class="row">
+            <div class="col-md-6">
+                <h4 class="title"><span class="glyphicon glyphicon-exclamation-sign"></span> Alert <b>{{alertName}}</b> occured on <b>{{systemName}}</b></h4>
+                <div class="alert-message">
+                    {{alertDescription}}
+                </div>
+            </div>
+            <div class="col-md-offset-1 col-md-5">
+                {{#if geoAlert}}
+                <img class="map" src="https://maps.googleapis.com/maps/api/staticmap?center={{geoAlert.center.lat}},{{geoAlert.center.long}}&zoom=19&size=400x200&maptype=roadmap&{{geoAlert.markers}}&key=AIzaSyCTwRVTf1EG9jt6CuF9HmGQ7evTqq_U7q0&path=color:0xff0000ff|weight:1|fillcolor:0xFFFF0033{{geoAlert.area}}">
+                {{/if}}
+            </div>
+        </div>
+
+        <a href="javascript:void(0)" data-toggle="collapse" data-target="#{{rawAlertId}}">
+          Show context
+        </a>
+        <div id="{{rawAlertId}}" class="collapse raw-alert">
+            <ul>
+                {{#each alertDetails}}
+                <li>{{key}}: {{value}}</li>
+                {{/each}}
+            </ul>
+        </div>
+        {{else}}
+         {{rawAlert}}
+        {{/if}}
+      </div>
+    </script>
+
+    <!--
+        Where all the magic happens ;)
+    -->
     <script>
-        var socket = io('/');
-        socket.on("welcome", function () {
+        // Compile the handlebar template
+        var renderAlert = Handlebars.compile($("#alert-template").html());
+
+        /**
+         * Util to get URL parameters
+         *
+         * @param  {string} name, name of the URL parameter
+         *
+         * @return {string} corresponding value
+         */
+        function getParameterByName(name) {
+            var url = window.location.href;
+            name = name.replace(/[\[\]]/g, "\\$&");
+            var regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+                results = regex.exec(url);
+
+            if (!results) {
+                return null;
+            }
+
+            if (!results[2]){
+              return '';
+            }
+
+            return decodeURIComponent(results[2].replace(/\+/g, " "));
+        }
+
+        /**
+         * Transform something like:
+         * POLYGON((1.513459905983427 43.53571822870852, 1.5132782701417 43.53561198808582, 1.513350857423165 43.5355424182895, 1.513500642032841 43.53564124092789, 1.513459905983427 43.53571822870852))
+         *
+         * In something like:
+         * |43.53571822870852,1.513459905983427|43.53561198808582,1.5132782701417|43.5355424182895,1.513350857423165|43.53564124092789,1.513500642032841|43.53571822870852,1.513459905983427
+         **/
+        function getConditionAreaDefinition(condition) {
+            var areaPoints = condition.operands[1].valueStr.split("((")[1].split("))")[0].split(",");
+            result  = "";
+            $.each(areaPoints, function(i, point) {
+                // point: "$long  $lat" => "$lat,$long"
+                var pointCoords = point.trim().split(" ");
+                result  += "|" + pointCoords[1] + "," + pointCoords[0];
+            });
+
+            return result;
+        }
+
+        function updateNbClients(nbClients) {
+            $("#nbClients").text(nbClients + " watcher(s)");
+        }
+
+        // AirVantage token passed in the URL as quick and dirty way to get authenticated
+        var token = getParameterByName("token");
+        // Connect to the server providing the token to be able to get more info about the alerts
+        var socket = io('/', token ? { query: "token=" + token } : {});
+
+        // When connected
+        socket.on("welcome", function(nbClients) {
             console.log("Connected");
             $("#status").text("Connected");
-            $("#status-icon").removeClass("glyphicon-remove-circle").addClass("glyphicon-ok-circle")
+            if (!token) {
+                $("#noToken").show().find("small").text("Provide a token in the URL to have more details on the received alerts");
+            }
+            $("#status-icon").removeClass("glyphicon-remove-circle").addClass("glyphicon-ok-circle");
+            updateNbClients(nbClients);
         });
-        socket.on('alerts', function (data) {
-            console.log(data);
-            $("#alerts").append($("<div>", {
-                "class":"well",
-                text: JSON.stringify(data)
-            }));
+
+        socket.on("updateNbClients", updateNbClients);
+
+        // When alerts are triggered
+        socket.on('alerts', function (alert) {
+            // Build the context to pass to the Handlebars template
+            var alertViewContext = {};
+
+            // Need an AirVantage token to receive the details
+            if (alert.alertDetails) {
+                // Parse the details of the alert to get more info about the context
+                // e.g. the values that caused this alert to be triggered
+                var alertDetails = [];
+                // Advanced parsing for geo fencing alerts
+                var geoAlert;
+                var markerColors = ["black", "pink", "green", "blue", "red"];
+
+                $.each(alert.alertDetails.attributes, function(i,attribute){
+                    var key = attribute ? attribute.id.name : null;
+                    // Advanced parsing for geo fencing alerts
+                    if (key === "DATA._LON_LAT") {
+                        // Ugly parsing of POINT(1.513391 43.535649)
+                        var coordinates = attribute.value.valueStr.split("(")[1].split(")")[0].split(" ");
+                        // Create the map markers
+                        var marker = "markers=color:" + markerColors.pop() + "%7C" + coordinates[1] + "," + coordinates[0];
+                        if (geoAlert) {
+                            geoAlert.markers += "&" + marker;
+                        } else {
+                            geoAlert = {
+                                markers : marker
+                            };
+                        }
+
+                        if (!geoAlert.center) {
+                            geoAlert.center = {
+                                lat: coordinates[1],
+                                long: coordinates[0]
+                            };
+                        }
+
+                        alertDetails.push({ key: "latitude", value: coordinates[1] });
+                        alertDetails.push({ key: "longitude", value: coordinates[0] });
+
+                        //Get and parse the alertRule condition to display the area
+                        $.each(alert.alertRule.conditions, function(i, condition){
+                            if (condition.operator === "GEO_CONTAINS") {
+                                geoAlert.area  = getConditionAreaDefinition(condition);
+                            }
+                        });
+                    } else if (key) {
+                        // Default parsing
+                        alertDetails.push({ key : key, value: attribute.value.valueStr });
+                    }
+                });
+
+                // Context of the Handlebar template AKA what will be displayed
+                alertViewContext = {
+                    alertName: alert.alertRule.name,
+                    alertDescription:alert.alertRule.message,
+                    alertDetails: alertDetails,
+                    systemName: alert.system.name,
+                    rawAlertId: "source-" + alert.content.date,
+                    geoAlert: geoAlert
+                };
+            } else {
+                alertViewContext = {
+                    rawAlert: JSON.stringify(alert.content),
+                };
+            }
+
+            // Display a human readable timestamp
+            alertViewContext.when = moment(alert.content.date).format("MMMM Do YYYY, h:mm:ss a");
+
+            // Remove "welcome" message
+            $("#alerts>h4").remove();
+
+            // Render the alert
+            $("#alerts").prepend(renderAlert(alertViewContext));
         });
+
+        window.onbeforeunload = function() {
+            socket.emit("disconnect");
+        };
     </script>
 </body>
 </html>
+
+
